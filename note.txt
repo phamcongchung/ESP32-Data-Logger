@@ -9,4 +9,3 @@
                     - 7 LED cảnh báo
                     - Nguồn vào DC 12V
                     - Công tắc nguồn
-3. Lỗi không rõ (đã khắc phục): Thông tin đăng nhập bị hỏng sau khi khởi tạo Modbus client

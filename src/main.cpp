@@ -49,13 +49,6 @@ static TaskHandle_t pushTaskHandle = NULL;
 static TaskHandle_t logTaskHandle = NULL;
 static TaskHandle_t apiTaskHandle = NULL;
 
-/*TickType_t gpsLastWake = xTaskGetTickCount();
-TickType_t modbusLastWake = xTaskGetTickCount();
-TickType_t rtcLastWake = xTaskGetTickCount();
-TickType_t remoteLastWake = xTaskGetTickCount();
-TickType_t localLastWake = xTaskGetTickCount();
-const TickType_t interval = pdMS_TO_TICKS(5000);
-const TickType_t modbus_interval = pdMS_TO_TICKS(10000);*/
 // Task delay times
 const TickType_t gpsDelay = pdMS_TO_TICKS(5000);
 const TickType_t modbusDelay = pdMS_TO_TICKS(10000);
@@ -64,7 +57,6 @@ const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 const TickType_t apiDelay = pdMS_TO_TICKS(5000);
 /*********************************** Function declarations ****************************************/
-bool isOpen(const char* filename);
 bool sendRows(File &data, String &timeStamp, int fileNo);
 bool processCsv(fs::FS &fs, const char* path, int fileNo);
 bool findTimestamp(File &data, String &timeStamp, size_t &filePtr);
@@ -179,8 +171,7 @@ void setup() {
   delay(1000);
   /**************************************** Initialize GPS ******************************************/
   if(!gps.init()){
-    lcd.clearRow(0);
-    lcd.print("Failed to initialize GPS");
+    Serial.println("Failed to initialize GPS");
     errLog("Failed to initialize GPS", Rtc);
   }
   /************************************* Connect modem to GPRS **************************************/
@@ -221,24 +212,23 @@ void setup() {
 
   //deleteFlash<String>(0);
   //deleteFlash<size_t>(20);
-  //processCsv(SD, "/error.csv", 0);
+  processCsv(SD, "/error.csv", 0);
 
   //deleteFlash<String>(20 + sizeof(size_t));
   //deleteFlash<size_t>(20 + sizeof(size_t) + 20);
-  //processCsv(SD, "/probe1.csv", 1);
+  processCsv(SD, "/probe1.csv", 1);
   /********************************** Initialize Modbus RTU client **********************************/
   if(!ModbusRTUClient.begin(RTU_BAUD))
     Serial.println("Failed to start Modbus RTU Client!");
   probeData.reserve(config.probeId.size());
 
   // Create FreeRTOS tasks
-  Serial.println("Creating tasks");
-  xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 5012, NULL, 1, &modbusTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 2, &apiTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 1, &pushTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 1, &rtcTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 2, &gpsTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 5012, NULL, 2, &modbusTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 3, &apiTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 2, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 2, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 1, &rtcTaskHandle, app_cpu);
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   vTaskDelete(NULL);
@@ -252,22 +242,18 @@ void readGPS(void *pvParameters){
     int status = gps.update();
     if(status != 1){
       if(status == 0){
-        lcd.clearRow(0);
-        lcd.print("No GPS response");
+        Serial.println("No GPS response");
         errLog("No GPS response", Rtc);
       } else if(status == 2) {
-        lcd.clearRow(0);
-        lcd.print("Invalid GPS data");
+        Serial.println("Invalid GPS data");
         errLog("Invalid GPS data", Rtc);
       }
     } else {
-      lcd.clearRow(0);
-      lcd.print("GPS updated");
+      Serial.println("GPS updated");
     }
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
-    //vTaskDelayUntil(&gpsLastWake, interval);
   }
 }
 /*************************************** Modbus Task ************************************************/
@@ -307,7 +293,6 @@ void readModbus(void *pvParameters){
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(modbusDelay);
-    //vTaskDelayUntil(&modbusLastWake, modbus_interval);
   }
 }
 /****************************************************************************************************/
@@ -330,39 +315,41 @@ void remotePush(void *pvParameters){
       } else {
         lcd.clearRow(2);
         lcd.print("MQTT connected");
-        remote.mqttSubscribe();
-
-        Serial.println("Sending data to MQTT...");
-        JsonDocument data;
-        data["Device"] = macAdr;
-        data["Date/Time"] = dateTime;
-
-        JsonObject gpsData = data.createNestedObject("Gps");
-        gpsData["Latitude"] = gps.location.latitude;
-        gpsData["Longitude"] = gps.location.longitude;
-        gpsData["Altitude"] = gps.location.altitude;
-        gpsData["Speed"] = gps.location.speed;
-
-        JsonArray measures = data.createNestedArray("Measure");
-        for(size_t i = 0; i < config.probeId.size(); i++){
-          JsonObject measure = measures.createNestedObject();
-          measure["Id"] = config.probeId[i];
-          measure["Volume"] = probeData[i].volume;
-          measure["Ullage"] = probeData[i].ullage;
-          measure["Temperature"] = probeData[i].temperature;
-          measure["ProductLevel"] = probeData[i].product;
-          measure["WaterLevel"] = probeData[i].water;
-        }
-        // Serialize JSON and publish
-        char buffer[1024];
-        size_t n = serializeJson(data, buffer);
-        remote.loop();
-        remote.mqttPublish(buffer, n);
       }
+    } else {
+      lcd.clearRow(2);
+      lcd.print("MQTT connected");
+      remote.mqttSubscribe();
+
+      Serial.println("Sending data to MQTT...");
+      JsonDocument data;
+      data["Device"] = macAdr;
+      data["Date/Time"] = dateTime;
+
+      JsonObject gpsData = data.createNestedObject("Gps");
+      gpsData["Latitude"] = gps.location.latitude;
+      gpsData["Longitude"] = gps.location.longitude;
+      gpsData["Altitude"] = gps.location.altitude;
+      gpsData["Speed"] = gps.location.speed;
+
+      JsonArray measures = data.createNestedArray("Measure");
+      for(size_t i = 0; i < config.probeId.size(); i++){
+        JsonObject measure = measures.createNestedObject();
+        measure["Id"] = config.probeId[i];
+        measure["Volume"] = probeData[i].volume;
+        measure["Ullage"] = probeData[i].ullage;
+        measure["Temperature"] = probeData[i].temperature;
+        measure["ProductLevel"] = probeData[i].product;
+        measure["WaterLevel"] = probeData[i].water;
+      }
+      // Serialize JSON and publish
+      char buffer[1024];
+      size_t n = serializeJson(data, buffer);
+      remote.loop();
+      remote.mqttPublish(buffer, n);
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
-    //vTaskDelayUntil(&remoteLastWake, interval);
   }
 }
 /********************* Read and push data from CSV file number 'fileNo' to API ***********************/
@@ -371,26 +358,30 @@ void apiLog(void* pvParameters){
     Serial.println("Pushing to API...");
     if(!modem.isGprsConnected()){
       if (!modem.gprsConnect()){
-        lcd.clearRow(1);
+        lcd.clearRow(2);
         lcd.print("GPRS failed");
         errLog("GPRS connection failed", Rtc);
       } else {
-        lcd.clearRow(1);
+        lcd.clearRow(2);
         lcd.print("GPRS connected");
       }
-    } else if(!remote.apiConnected()){
+    } else if(!remote.apiConnected()){ 
       if(!remote.apiConnect()){
-        lcd.clearRow(2);
+        lcd.clearRow(0);
         lcd.print("API failed");
       } else {
-        lcd.clearRow(2);
+        lcd.clearRow(0);
         lcd.print("API connected");
-        if(logCount == 5){
-          if(processCsv(SD, "/error.csv", 0) && processCsv(SD, "/probe1.csv", 1))
-            logCount = 0;
-        }
+      }
+    } else {
+      lcd.print("API connected");
+      if(logCount == 5){
+        esp_task_wdt_reset();
+        if(processCsv(SD, "/error.csv", 0) && processCsv(SD, "/probe1.csv", 1))
+          logCount = 0;
       }
     }
+    esp_task_wdt_reset();
     vTaskDelay(apiDelay);
   }
 }
@@ -411,7 +402,6 @@ void localLog(void *pvParameters){
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
-    //vTaskDelayUntil(&localLastWake, interval);
   }
 }
 /****************************************************************************************************/
@@ -435,7 +425,6 @@ void checkRTC(void *pvParameters){
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
-    //vTaskDelayUntil(&rtcLastWake, interval);
   }
 }
 /*************************************** Support functions *******************************************/
@@ -452,7 +441,6 @@ bool findTimestamp(File &data, String &timeStamp, size_t &filePtr){
   }
   return false;
 }
-
 // Read and process rows from the CSV file
 bool sendRows(File &data, String &timeStamp, int fileNo){
   Serial.println("Sending rows");
@@ -469,7 +457,7 @@ bool sendRows(File &data, String &timeStamp, int fileNo){
     Serial.println(jsonPayload);
     retries = 0;
     while(retries < maxRetries){
-      bool sent = (fileNo == 0) ? remote.errorToApi(jsonPayload) : remote.dataToApi(jsonPayload);
+      bool sent = (fileNo == 0) ? remote.send(jsonPayload, 0) : remote.send(jsonPayload, 1);
       if(sent){
         timeStamp = readCsv(rows[rowCount - 1]);
         rowCount = 0;
@@ -533,13 +521,4 @@ bool processCsv(fs::FS &fs, const char* path, int fileNo){
   }
   data.close();
   return true;
-}
-
-bool isOpen(const char *filename){
-  for(auto &file : openFiles) {
-    if(file && strcmp(file.name(), filename) == 0){
-      return true;
-    }
-  }
-  return false;
 }

@@ -25,10 +25,9 @@ public:
   void retrieveToken();
   bool apiConnect();
   bool apiConnected();
-  bool post(const char* request, const char* msg);
-  bool authPost(const char* request, const char* msg);
-  bool dataToApi(String& jsonPayload);
-  bool errorToApi(String& jsonPayload);
+  bool post(const char* endpoint, const char* msg);
+  bool authPost(const char* endpoint, const char* msg);
+  bool send(String& jsonPayload, int ndPntCode);
 private:
   TinyGsmClient* mqttClient;
   TinyGsmClient* apiClient;

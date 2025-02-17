@@ -42,60 +42,37 @@ bool RemoteLogger::apiConnect(){
 bool RemoteLogger::apiConnected(){
   return apiClient->connected();
 }
+
 // POST request without authentication
-bool RemoteLogger::post(const char* request, const char* msg){
-  /*char header[1250];
-  snprintf(header, sizeof(header),
-          "POST %s HTTP/1.1\r\n"
-          "Host: %s:%d\r\n"
-          "Content-Type: application/json\r\n"
-          "tenant: root\r\n"
-          "Accept-Language: en-US\r\n"
-          "Connection: keep-alive\r\n"
-          "Content-Length: %d\r\n\r\n",
-          request, this->api.host.c_str(), this->api.port, strlen(msg));*/
+bool RemoteLogger::post(const char* endpoint, const char* msg){
   if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  apiClient->print( "POST " + String(request) + " HTTP/1.1\r\n"
+  apiClient->print( "POST " + String(endpoint) + " HTTP/1.1\r\n"
                     "Host: "+ this->api.host + ":" + String(this->api.port) + "\r\n"
                     "Content-Type: application/json\r\n"
                     "tenant: root\r\n"
                     "Accept-Language: en-US\r\n"
                     "Connection: keep-alive\r\n"
                     "Content-Length: " + String(strlen(msg)) + "\r\n\r\n");
-  //Serial.print(header);
   apiClient->print(msg);
-  //Serial.println(msg);
   return true;
 }
 // POST request with authentication
-bool RemoteLogger::authPost(const char* request, const char* msg){
-  /*char header[1250];
-  snprintf(header, sizeof(header),
-          "POST %s HTTP/1.1\r\n"
-          "Host: %s:%d\r\n"
-          "Content-Type: application/json\r\n"
-          "Authorization: Bearer %s\r\n"
-          "Accept-Language: en-US\r\n"
-          "Connection: keep-alive\r\n"
-          "Content-Length: %d\r\n\r\n",
-          request, this->api.host.c_str(), this->api.port, this->token.c_str(), strlen(msg));*/
+bool RemoteLogger::authPost(const char* endpoint, const char* msg){
   if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  apiClient->print( "POST " + String(request) + " HTTP/1.1\r\n"
+  apiClient->print( "POST " + String(endpoint) + " HTTP/1.1\r\n"
                     "Host: "+ this->api.host + ":" + String(this->api.port) + "\r\n"
                     "Content-Type: application/json\r\n"
                     "Authorization: Bearer " + this->token + "\r\n"
                     "Accept-Language: en-US\r\n"
                     "Connection: keep-alive\r\n"
                     "Content-Length: " + String(strlen(msg)) + "\r\n\r\n");
-  //Serial.print(header);
   apiClient->print(msg);
-  //Serial.println(msg);
   return true;
 }
 
@@ -150,45 +127,17 @@ void RemoteLogger::retrieveToken(){
   }
 }
 
-bool RemoteLogger::errorToApi(String& jsonPayload){
+bool RemoteLogger::send(String& jsonPayload, int ndPntCode){
   if(this->token == NULL){
     Serial.println("Error: Token is NULL");
     return false;
   }
   Serial.println("Sending error chunk...");
-  authPost("/api/v1/errorloggers/addlisterrorogger", jsonPayload.c_str());
-  
-  Serial.println("Waiting for server response...");
-  unsigned long startTime = millis();
-  String response;
-  while((millis() - startTime) < API_TIMEOUT){
-    if(apiClient->available()){
-      response = apiClient->readString();
-      Serial.println(response);
-      break;
-    }
+  if(ndPntCode == 0){
+    authPost("/api/v1/errorloggers/addlisterrorogger", jsonPayload.c_str());
+  } else if(ndPntCode == 1){
+    authPost("/api/v1/dataloggers/addlistdatalogger", jsonPayload.c_str());
   }
-  if(response.isEmpty()){
-    Serial.println("Error: No response from server");
-    return false;
-  }
-  if(response.startsWith("HTTP/1.1 200")){
-    Serial.println("Data successfully sent to API");
-    return true;
-  } else {
-    Serial.println("Error: API response indicates failure");
-  }
-  return false;
-}
-
-bool RemoteLogger::dataToApi(String& jsonPayload){
-  if(this->token == NULL){
-    Serial.println("Error: Token is NULL");
-    return false;
-  }
-  Serial.println("Sending data chunk...");
-  authPost("/api/v1/dataloggers/addlistdatalogger", jsonPayload.c_str());
-  
   Serial.println("Waiting for server response...");
   unsigned long startTime = millis();
   String response;
